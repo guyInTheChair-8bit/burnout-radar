@@ -1,0 +1,26 @@
+# ── Credentials & secrets ──────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ── Go build artifacts ─────────────────────────────────────────────────────
+mcp-daemon/burnout-daemon
+mcp-daemon/*.db
+mcp-daemon/*.db-shm
+mcp-daemon/*.db-wal
+*.test
+*.out
+
+# ── Deno cache ─────────────────────────────────────────────────────────────
+.deno/
+deno.lock
+
+# ── OS & editor junk ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

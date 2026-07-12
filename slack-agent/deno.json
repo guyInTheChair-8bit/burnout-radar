@@ -1,0 +1,19 @@
+{
+  "name": "burnout-radar-slack-agent",
+  "version": "1.0.0",
+  "exports": "./main.ts",
+  "imports": {
+    "@slack/deno-slack-sdk": "https://deno.land/x/deno_slack_sdk@2.1.4/mod.ts",
+    "@slack/deno-slack-api": "https://deno.land/x/deno_slack_api@1.7.0/mod.ts"
+  },
+  "tasks": {
+    "start": "deno run --allow-net --allow-read --allow-env --env-file=.env main.ts",
+    "dev": "deno run --allow-net --allow-read --allow-env --env-file=.env --watch main.ts",
+    "check": "deno check main.ts functions/evaluate_metrics.ts functions/action_handlers.ts prompts/agent_context.ts ui/block_kit_builder.ts"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true
+  }
+}
