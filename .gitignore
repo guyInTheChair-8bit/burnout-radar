@@ -24,3 +24,8 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Project specification docs (local only)
+agents.md
+tasks.md
+skills/
