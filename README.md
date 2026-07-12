@@ -79,6 +79,42 @@ Triggers when channel volume drops (Z < 1.0), activity shifts heavily to DMs (> 
 
 ---
 
+## Statistical Foundation
+
+The Go daemon computes all indicators over anonymous integer slices — no user identity is present at any point in the calculation.
+
+### Gini Coefficient
+
+Measures workload inequality within a channel. A score of 0 is perfect equality; 1 means a single person produces all traffic.
+
+$$
+G = \frac{2 \sum_{i=1}^{n} i \, x_i}{n \sum_{i=1}^{n} x_i} - \frac{n+1}{n}
+$$
+
+Where $x_i$ are message counts sorted in ascending order and $n$ is the number of active participants.
+
+### Z-Score (Volume Anomaly Detection)
+
+Detects whether the current window's message volume is statistically anomalous relative to a rolling historical baseline.
+
+$$
+Z = \frac{X - \mu}{\sigma}
+$$
+
+Where $X$ is the current window volume, $\mu$ is the historical mean, and $\sigma$ is the historical standard deviation.
+
+### Pareto Top-20% Share
+
+Measures the fraction of total traffic produced by the top 20% of participants (by message count). Used alongside the Gini coefficient to confirm concentration rather than just inequality.
+
+$$
+P_{20} = \frac{\sum_{i=\lceil 0.8n \rceil}^{n} x_i}{\sum_{i=1}^{n} x_i} \times 100
+$$
+
+Where counts are sorted in descending order before slicing.
+
+---
+
 ## Testing Guide for Judges
 
 The SQLite database has been pre-seeded with representative data so the agent can be evaluated immediately without waiting for a full data collection window.
