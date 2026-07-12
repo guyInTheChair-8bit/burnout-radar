@@ -77,41 +77,56 @@ type ChannelState struct {
 type ChannelStore struct {
 	mu       sync.RWMutex
 	channels map[string]*ChannelState
+
+	// Default config for auto-registering new channels
+	hasher          *analytics.Hasher
+	defaultMean     float64
+	defaultStdDev   float64
+	defaultBaseline float64
 }
 
 // NewChannelStore creates an empty, ready-to-use ChannelStore.
-func NewChannelStore() *ChannelStore {
+func NewChannelStore(hasher *analytics.Hasher, defaultMean, defaultStdDev, defaultBaseline float64) *ChannelStore {
 	return &ChannelStore{
-		channels: make(map[string]*ChannelState),
+		channels:        make(map[string]*ChannelState),
+		hasher:          hasher,
+		defaultMean:     defaultMean,
+		defaultStdDev:   defaultStdDev,
+		defaultBaseline: defaultBaseline,
 	}
 }
 
-// Register adds a new channel to the store and allocates its dedicated Pipeline.
-// If the channel_id is already registered, the call is a no-op.
-// Safe to call at startup before any goroutines are running.
-func (cs *ChannelStore) Register(
-	channelID, channelName string,
-	hasher *analytics.Hasher,
-	historicalMean, historicalStdDev float64,
-	avgWordCountBaseline float64,
-) {
+// autoRegister creates a new ChannelState safely.
+func (cs *ChannelStore) autoRegister(channelID, channelName string) *ChannelState {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	if _, exists := cs.channels[channelID]; exists {
-		return // already registered — idempotent
+	if state, exists := cs.channels[channelID]; exists {
+		// Update name if we learned a better one
+		if state.ChannelName == state.ChannelID && channelName != channelID {
+			state.ChannelName = channelName
+		}
+		return state
 	}
 
-	cs.channels[channelID] = &ChannelState{
+	state := &ChannelState{
 		ChannelID:        channelID,
 		ChannelName:      channelName,
-		Pipeline:         analytics.NewPipeline(hasher),
-		HistoricalMean:   historicalMean,
-		HistoricalStdDev: historicalStdDev,
+		Pipeline:         analytics.NewPipeline(cs.hasher),
+		HistoricalMean:   cs.defaultMean,
+		HistoricalStdDev: cs.defaultStdDev,
 		Snapshot: ChannelMetricsSnapshot{
-			AvgWordCountBaseline: avgWordCountBaseline,
+			AvgWordCountBaseline: cs.defaultBaseline,
 		},
 	}
+	cs.channels[channelID] = state
+	return state
+}
+
+// Register adds a new channel to the store manually.
+// Safe to call at startup before any goroutines are running.
+func (cs *ChannelStore) Register(channelID, channelName string) {
+	cs.autoRegister(channelID, channelName)
 }
 
 // ---------------------------------------------------------------------------
@@ -119,19 +134,18 @@ func (cs *ChannelStore) Register(
 // ---------------------------------------------------------------------------
 
 // Process routes an incoming Slack message event to the correct channel's
-// ZKA pipeline. Returns false if the channel_id is not registered (the
-// message is for an unmonitored channel and should be silently dropped).
+// ZKA pipeline. Auto-registers the channel if it's not yet monitored.
 //
 // Concurrency: takes a read lock on the outer map to locate the channel,
 // then takes the channel's own mutex before calling Pipeline.Process().
-// Concurrent events for different channels never block each other.
 func (cs *ChannelStore) Process(channelID string, msg analytics.SlackWebhookPayload) bool {
 	cs.mu.RLock()
 	state, ok := cs.channels[channelID]
 	cs.mu.RUnlock()
 
 	if !ok {
-		return false // unmonitored channel — drop silently
+		// Auto-register using channelID as the fallback name
+		state = cs.autoRegister(channelID, channelID)
 	}
 
 	// Serialise access to this channel's pipeline only.
@@ -310,21 +324,15 @@ type SnapshotResponse struct {
 }
 
 // GetSnapshot returns a safe read-only scalar snapshot for the given channel.
-//
-// Concurrency: acquires a read lock on the outer map (to locate the state
-// pointer), then the channel's own mutex (to copy the snapshot). Both locks
-// are released before returning.
-//
-// Returns (nil, false) if:
-//   - the channel_id is not registered, OR
-//   - no metrics have been computed yet (snapshot is zero-value)
-func (cs *ChannelStore) GetSnapshot(channelID string) (*SnapshotResponse, bool) {
+// If the channel is not registered, it auto-registers it.
+// If no metrics have been computed yet, it returns a synthetic "healthy" baseline.
+func (cs *ChannelStore) GetSnapshot(channelID, channelName string) (*SnapshotResponse, bool) {
 	cs.mu.RLock()
 	state, ok := cs.channels[channelID]
 	cs.mu.RUnlock()
 
 	if !ok {
-		return nil, false
+		state = cs.autoRegister(channelID, channelName)
 	}
 
 	state.mu.Lock()
@@ -333,8 +341,21 @@ func (cs *ChannelStore) GetSnapshot(channelID string) (*SnapshotResponse, bool) 
 	state.mu.Unlock()
 
 	// If ComputedAt is zero the worker hasn't flushed this channel yet.
+	// Return a healthy synthetic baseline so slash commands work immediately.
 	if snap.ComputedAt.IsZero() {
-		return nil, false
+		return &SnapshotResponse{
+			ChannelID:            channelID,
+			ChannelName:          name,
+			Date:                 time.Now().UTC().Format("2006-01-02"),
+			ZScore:               0.0,
+			GiniCoeff:            0.0,
+			ParetoTop20Share:     0.0,
+			SentReceivedRatio:    1.0,
+			DMSharePct:           0.0,
+			AvgWordCount:         cs.defaultBaseline,
+			AvgWordCountBaseline: cs.defaultBaseline,
+			TotalMessages:        0,
+		}, true
 	}
 
 	return &SnapshotResponse{

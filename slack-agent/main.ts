@@ -292,7 +292,7 @@ async function processSlashCommand(
   // ── Step 1: Pull latest metrics from the Go daemon ───────────────────────
   let metrics: BurnoutMetrics;
   try {
-    const url = `${GO_DAEMON_URL}/api/metrics?channel_id=${encodeURIComponent(channelId)}`;
+    const url = `${GO_DAEMON_URL}/api/metrics?channel_id=${encodeURIComponent(channelId)}&channel_name=${encodeURIComponent(channelName)}`;
     const resp = await fetch(url, {
       signal: AbortSignal.timeout(8_000), // 8 s — daemon should respond quickly
     });

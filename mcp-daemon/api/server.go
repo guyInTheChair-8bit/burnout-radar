@@ -210,8 +210,14 @@ func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	channelName := r.URL.Query().Get("channel_name")
+	if channelName == "" {
+		channelName = channelID
+	}
+
 	// Thread-safe read via two-level locking in GetSnapshot.
-	snap, ok := s.store.GetSnapshot(channelID)
+	// This will now auto-register the channel if unknown and return a healthy baseline.
+	snap, ok := s.store.GetSnapshot(channelID, channelName)
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)

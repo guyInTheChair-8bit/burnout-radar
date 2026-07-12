@@ -52,7 +52,7 @@ func main() {
 	//    Format: MONITORED_CHANNELS="C123:backend-team,C456:general"        //
 	//    If no name is provided (e.g. "C123"), the channel ID is used.      //
 	// ------------------------------------------------------------------ //
-	channelStore := store.NewChannelStore()
+	channelStore := store.NewChannelStore(hasher, 100.0, 20.0, 14.0)
 
 	monitored := parseMonitoredChannels(os.Getenv("MONITORED_CHANNELS"))
 	if len(monitored) == 0 {
@@ -61,7 +61,7 @@ func main() {
 		monitored = []channelEntry{{ID: "C_DEMO", Name: "demo-channel"}}
 	}
 	for _, ch := range monitored {
-		channelStore.Register(ch.ID, ch.Name, hasher, 100.0, 20.0, 14.0)
+		channelStore.Register(ch.ID, ch.Name)
 		log.Printf("main: registered channel %s (#%s)", ch.ID, ch.Name)
 	}
 	log.Printf("main: monitoring %d channel(s)", channelStore.Len())
