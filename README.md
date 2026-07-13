@@ -124,6 +124,17 @@ The SQLite database has been pre-seeded with representative data so the agent ca
 3. **Pull an On-Demand Report** — Type `/burnout` and press Enter. The Deno agent will query the Go daemon, pass the data to Gemini 2.5 Flash, and render a private report visible only to you.
 4. **Test Interactivity** — Click the primary action buttons (e.g., **Suggest No-Meeting Day** or **Send Anonymous Pulse Survey**). The bot responds instantly with interactive, ephemeral Block Kit drafts to help resolve the detected issue.
 
+### Simulation Cheat Codes
+
+The slash command accepts optional arguments that bypass the Go daemon and inject mathematically guaranteed metrics, so every alert type can be demonstrated on demand without waiting for organic data to accumulate.
+
+| Command | Alert Triggered | Key Metrics Injected |
+|---|---|---|
+| `/burnout dependency` | Key Person Dependency Risk | Z=2.5, Gini=0.85, Pareto=90% |
+| `/burnout crunch` | Systemic Crunch Time Risk | Z=2.2, Gini=0.2, Sent/Received=0.4 |
+| `/burnout isolation` | Silent Isolation Risk | Z=0.5, DM share=80%, word count -70% |
+| `/burnout` | Real data from Go daemon | Live channel metrics |
+
 ---
 
 ## Local Developer Setup

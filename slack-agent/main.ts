@@ -280,54 +280,80 @@ async function runBurnoutPipeline(
  *   4. Build Block Kit with buildAlertDashboard() or buildNoBurnoutMessage()
  *   5. Post the result via chat.postEphemeral — visible ONLY to the invoking manager
  */
+// Simulation presets — mathematically guaranteed to breach each alert threshold.
+// Used by judges to demo specific risk scenarios without waiting for real data.
+const SIMULATION_PRESETS: Record<string, BurnoutMetrics | undefined> = {
+  // /burnout dependency → Z > 2.0, Gini > 0.7, Pareto > 85%
+  dependency: {
+    channel_id: "", channel_name: "", date: "",
+    z_score: 2.5, gini_coeff: 0.85, pareto_top_20_share: 90,
+    sent_received_ratio: 1.2, dm_share_pct: 10,
+    avg_word_count: 45, avg_word_count_baseline: 45,
+  },
+  // /burnout crunch → Z > 2.0, Gini < 0.4, Sent/Received < 0.7
+  crunch: {
+    channel_id: "", channel_name: "", date: "",
+    z_score: 2.2, gini_coeff: 0.2, pareto_top_20_share: 30,
+    sent_received_ratio: 0.4, dm_share_pct: 20,
+    avg_word_count: 20, avg_word_count_baseline: 25,
+  },
+  // /burnout isolation → Z < 1.0, DM share > 70%, word count drops > 30%
+  isolation: {
+    channel_id: "", channel_name: "", date: "",
+    z_score: 0.5, gini_coeff: 0.5, pareto_top_20_share: 50,
+    sent_received_ratio: 1.0, dm_share_pct: 80,
+    avg_word_count: 15, avg_word_count_baseline: 50,
+  },
+};
+
 async function processSlashCommand(
   channelId: string,
   channelName: string,
   userId: string,
+  commandText: string,
 ): Promise<void> {
+  const arg = commandText.trim().toLowerCase();
+  const today = new Date().toISOString().split("T")[0];
+
   console.log(
-    `[slash] /burnout invoked by user=${userId} in channel=${channelId} (#${channelName})`,
+    `[slash] /burnout invoked by user=${userId} channel=${channelId} arg="${arg}"`,
   );
 
-  // ── Step 1: Pull latest metrics from the Go daemon ───────────────────────
-  let metrics: BurnoutMetrics;
-  try {
-    const url = `${GO_DAEMON_URL}/api/metrics?channel_id=${encodeURIComponent(channelId)}&channel_name=${encodeURIComponent(channelName)}`;
-    const resp = await fetch(url, {
-      signal: AbortSignal.timeout(8_000), // 8 s — daemon should respond quickly
-    });
+  let metrics: BurnoutMetrics | null = null;
 
-    if (resp.status === 404) {
-      // Channel registered but no evaluation tick has run yet.
+  // ── Step 1a: Check for simulation cheat codes ────────────────────────────
+  const preset = SIMULATION_PRESETS[arg];
+  if (preset) {
+    // Inject channel context into the preset and use it directly.
+    // No daemon call needed — values are guaranteed to breach thresholds.
+    metrics = { ...preset, channel_id: channelId, channel_name: channelName, date: today };
+    console.log(`[slash] simulation mode: injecting "${arg}" preset metrics`);
+  }
+
+  // ── Step 1b: No cheat code — fetch real data from the Go daemon ───────────
+  if (!metrics) {
+    try {
+      const url =
+        `${GO_DAEMON_URL}/api/metrics?channel_id=${encodeURIComponent(channelId)}` +
+        `&channel_name=${encodeURIComponent(channelName)}`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+
+      if (!resp.ok) {
+        throw new Error(`Go daemon returned HTTP ${resp.status}`);
+      }
+      metrics = (await resp.json()) as BurnoutMetrics;
+    } catch (err) {
+      console.error(`[slash] daemon fetch failed: ${(err as Error).message}`);
       await postEphemeral(
-        channelId,
-        userId,
-        [],
-        `⏳ BurnoutRadar hasn't computed metrics for *#${channelName}* yet. ` +
-          "Metrics are calculated on each evaluation tick (every 60 s by default). " +
-          "Please try again shortly.",
+        channelId, userId, [],
+        "BurnoutRadar could not reach the metrics daemon. Is it running? " +
+          `(${(err as Error).message})`,
       );
       return;
     }
-
-    if (!resp.ok) {
-      throw new Error(`Go daemon returned HTTP ${resp.status}`);
-    }
-
-    metrics = (await resp.json()) as BurnoutMetrics;
-  } catch (err) {
-    console.error(`[slash] daemon fetch failed: ${(err as Error).message}`);
-    await postEphemeral(
-      channelId,
-      userId,
-      [],
-      "⚠️ BurnoutRadar could not reach the metrics daemon. Is it running? " +
-        `(${(err as Error).message})`,
-    );
-    return;
   }
 
-  // ── Step 2: Evaluate risk profile against the three burnout rules ─────────
+  // ── Step 2: Evaluate risk profile ────────────────────────────────────────
   const { riskProfile, severity } = evaluateMetrics(metrics);
   console.log(`[slash] channel=#${channelName} risk=${riskProfile} severity=${severity}`);
 
@@ -341,7 +367,6 @@ async function processSlashCommand(
       llmSummary = llmResult.summary;
       suggestedAction = llmResult.suggestedAction;
     } catch (err) {
-      // Non-fatal — fallback text is already set above.
       console.error(`[slash] Gemini failed: ${(err as Error).message}`);
     }
   }
@@ -362,11 +387,11 @@ async function processSlashCommand(
   // ── Step 5: Deliver privately to the invoking manager only ───────────────
   const fallback =
     riskProfile === "none"
-      ? `✅ BurnoutRadar: #${channelName} looks healthy.`
-      : `${severity === "severe" ? "🚨" : "⚠️"} BurnoutRadar: ${riskProfile} detected in #${channelName}.`;
+      ? `BurnoutRadar: #${channelName} looks healthy.`
+      : `BurnoutRadar: ${riskProfile} detected in #${channelName}.`;
 
   await postEphemeral(channelId, userId, blocks, fallback);
-  console.log(`[slash] ephemeral report delivered to user=${userId} in channel=${channelId}`);
+  console.log(`[slash] ephemeral report delivered to user=${userId}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -408,27 +433,29 @@ async function handleRequest(request: Request): Promise<Response> {
     const channelName = (formData.get("channel_name") as string) ?? channelId;
     const userId = (formData.get("user_id") as string) ?? "";
     const command = (formData.get("command") as string) ?? "";
+    const commandText = (formData.get("text") as string) ?? ""; // simulation arg
 
     if (!channelId || !userId) {
       return new Response(
-        JSON.stringify({ response_type: "ephemeral", text: "⚠️ Could not identify channel or user." }),
+        JSON.stringify({ response_type: "ephemeral", text: "Could not identify channel or user." }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    console.log(`[slash] received ${command} from user=${userId} in channel=${channelId}`);
+    console.log(`[slash] received ${command} ${commandText} from user=${userId} in channel=${channelId}`);
 
     // Fire-and-forget: process asynchronously after acknowledging Slack.
-    processSlashCommand(channelId, channelName, userId).catch((err) =>
+    processSlashCommand(channelId, channelName, userId, commandText).catch((err) =>
       console.error(`[slash] unhandled error: ${(err as Error).message}`)
     );
 
     // Immediate 200 OK acknowledgment — Slack requires this within 3 seconds.
+    const ackText = commandText
+      ? `Simulating *${commandText}* risk for *#${channelName}*...`
+      : `Fetching BurnoutRadar report for *#${channelName}*...`;
+
     return new Response(
-      JSON.stringify({
-        response_type: "ephemeral",
-        text: `⏳ Fetching BurnoutRadar report for *#${channelName}*\u2026`,
-      }),
+      JSON.stringify({ response_type: "ephemeral", text: ackText }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   }
