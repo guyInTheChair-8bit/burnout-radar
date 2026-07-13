@@ -252,6 +252,16 @@ burnout-radar/
         └── block_kit_builder.ts # Slack Block Kit dashboard builder
 ```
 
+## Scaling to Production
+
+While the hackathon demo evaluates metrics every 60 seconds for real-time testing, BurnoutRadar is designed to scale for enterprise environments without causing manager alert fatigue.
+
+In a true production deployment, the architecture shifts to a batch-processing model:
+
+*   **Daily Batch Processing:** The background ticker shifts from 60-second intervals to 24-hour cycles. The Go daemon holds the anonymous hashes in memory for the workday and evaluates the mathematical distributions once at 5:00 PM via environment configuration (`EVALUATION_INTERVAL_HOURS=24`).
+*   **Alert Cooldowns:** To prevent spam during sustained crunch times, the SQLite database tracks `last_alerted_at` timestamps. This enforces a strict 72-hour webhook cooldown per channel before a manager can be pinged for the same risk profile.
+*   **Predictable Weekly Rollups:** Instead of relying solely on spontaneous alerts, the Deno edge agent can utilize cron jobs to pull 7-day trailing averages from the MCP server, delivering a single, comprehensive "Weekly Team Health Report" every Friday afternoon.
+
 ---
 
 ## License
